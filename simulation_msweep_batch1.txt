@@ -1,0 +1,91 @@
+#! /bin/bash
+#-----------------------------------------
+#SBATCH --job-name=mycoplasma_simulation_mSWEEP_1_4000
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=48
+#SBATCH --mem=360G
+#SBATCH --time=7-00:00:00  
+#SBATCH --mail-user=robertv@tamu.edu
+#SBATCH --mail-type=ALL
+
+
+#-----------------------------------------
+# Load necessary modules and set environment variables
+
+
+
+module load Java/13.0.2
+module load GCC/11.2.0
+module load OpenMPI/4.1.1
+
+export PATH=$PATH:/scratch/user/robertv/alexpreynolds-sample-05fa421/
+
+# Full path to grid_parameters file
+grid_parameters_file="/scratch/user/robertv/SimulationRuns/grid_parameters_new.csv"
+ 
+# Path to the directory where the genome files are located
+GENOME_DIR="/scratch/user/robertv/SimulationRuns/extracted_reads"
+
+# Path to scratch directory
+SCRATCH_DIR="/scratch/user/robertv/$SLURM_JOBID"
+
+ 
+# Directory to save mSWEEP output
+MSWEEP_DIR="$SCRATCH_DIR/output_msweep"
+mkdir -p "$MSWEEP_DIR" || { echo "Error: Unable to create directory $MSWEEP_DIR"; exit 1; }
+
+# Directory for themisto temp files and mSWEEP output temp files
+THEMISTO_TMP_DIR="$MSWEEP_DIR/tmp"
+mkdir -p "$THEMISTO_TMP_DIR" || { echo "Error: Unable to create directory $THEMISTO_TMP_DIR"; exit 1; }
+echo "THEMISTO_TMP_DIR created: $THEMISTO_TMP_DIR"
+
+# Paths to pre-built themisto index files
+THEMISTO_INDEX_DIR="/scratch/user/robertv/Simulation_Themisto_mSWEEP"
+THEMISTO_INDEX="${THEMISTO_INDEX_DIR}/themisto_index"
+
+# Path to the clustering file
+CLUSTERING_FILE="/scratch/user/robertv/Simulation_Themisto_mSWEEP/clustering.txt"
+
+
+# Read the CSV file line by line, skipping the header
+awk -F ',' 'NR>1 && $1 >= 1 && $1 <= 4000' "$grid_parameters_file" | while IFS=, read -r niter enrichment pcv seqdepth targetNreads filenames; do echo "niter: $niter"  # Print the value of niter for each iteration
+    echo "targetNreads: $targetNreads"  # Add this line to print the value of targetNreads
+    # Remove quotes from filenames
+    filenames=$(echo "$filenames" | sed 's/"//g' | tr -d '\r')
+    # Extract filenames
+    IFS='|' read -r -a files <<< "$filenames"
+    echo "${files[@]}"
+	
+    # Create temporary files for concatenated genome and sampled reads
+    concatenated_genome_tmp=$(mktemp)
+    sampled_reads_tmp=$(mktemp --suffix=.fna)
+
+  
+    for filename in "${files[@]}"; do
+        # Concatenate genome files
+        echo -e "$(cat "$GENOME_DIR/$filename")" >> "$concatenated_genome_tmp" || { echo "Error: Unable to save concatenated genome to file"; continue; }
+    done
+
+  # Sample reads with replacement
+    sample --sample-size="$targetNreads" --sample-with-replacement --lines-per-offset=4 "$concatenated_genome_tmp" > "$sampled_reads_tmp" || { echo "Error: Unable to sample reads"; continue; }
+    echo "Sampled reads saved to: $sampled_reads_tmp"
+    rm "$concatenated_genome_tmp"
+
+# Run themisto and mSWEEP on sampled reads
+    sampled_file="$sampled_reads_tmp"
+    echo "Running themisto on sampled file: $sampled_file"
+    /scratch/user/robertv/themisto_linux-v3.2.2/themisto pseudoalign -q "$sampled_file" -i "$THEMISTO_INDEX" --temp-dir "$THEMISTO_TMP_DIR" -t 48 > "F${niter}_themisto.txt"
+
+    echo "Running mSWEEP on sampled file: $sampled_file"
+    /scratch/user/robertv/mSWEEP-v2.1.0-x86_64-redhat-linux/mSWEEP  --themisto "F${niter}_themisto.txt" -i "$CLUSTERING_FILE" -t 48 -o "${MSWEEP_DIR}/F${niter}_msweep_output"
+
+    echo "mSWEEP completed for sampled file: $sampled_file"
+
+    # Clean up temporary files
+    rm "$sampled_reads_tmp"
+    rm "F${niter}_themisto.txt"
+
+done
+
+echo "Concatenation, sampling, and mSWEEP completed."

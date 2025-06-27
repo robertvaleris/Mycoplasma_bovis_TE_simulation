@@ -1,0 +1,76 @@
+#! /bin/bash
+#-----------------------------------------
+#SBATCH --job-name=mycoplasma_simulation1_4000
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=48
+#SBATCH --mem=360G
+#SBATCH --time=2-00:00:00  
+#SBATCH --mail-user=robertv@tamu.edu
+#SBATCH --mail-type=ALL
+
+#-----------------------------------------
+# Load necessary modules and set environment variables
+
+
+module load Java/13.0.2
+module load GCC/11.2.0
+module load OpenMPI/4.1.1
+module load Kraken2/2.1.2
+
+export PATH=$PATH:/scratch/user/robertv/alexpreynolds-sample-05fa421/
+
+#export LC_CTYPE=en_US.UTF-8
+#export LC_ALL=en_US.UTF-8
+
+# Full path to grid_parameters file
+grid_parameters_file="/scratch/user/robertv/SimulationRuns/grid_parameters_new.csv"
+ 
+# Path to the directory where the genome files are located
+GENOME_DIR="/scratch/user/robertv/SimulationRuns/extracted_reads"
+ 
+# Path to scratch directory
+SCRATCH_DIR="/scratch/user/robertv/$SLURM_JOBID"
+ 
+
+# Directory to save Kraken2 output
+KRAKEN_DIR="$SCRATCH_DIR/output_kraken"
+mkdir -p "$KRAKEN_DIR" || { echo "Error: Unable to create directory $KRAKEN_DIR"; exit 1; }
+ 
+ 
+# Read the CSV file line by line, skipping the header
+awk -F ',' 'NR>1 && $1 >= 1 && $1 <= 4000' "$grid_parameters_file" | while IFS=, read -r niter enrichment pcv seqdepth targetNreads filenames; do    echo "niter: $niter"  # Print the value of niter for each iteration
+    echo "targetNreads: $targetNreads"  # Add this line to print the value of targetNreads
+    # Remove quotes from filenames
+    filenames=$(echo "$filenames" | sed 's/"//g')
+    # Extract filenames
+    IFS='|' read -r -a files <<< "$filenames"
+    echo "${files[@]}"
+	
+    # Create temporary files for concatenated genome and sampled reads
+    concatenated_genome_tmp=$(mktemp)
+    sampled_reads_tmp=$(mktemp)
+
+  
+    for filename in "${files[@]}"; do
+        # Concatenate genome files
+        echo -e "$(cat "$GENOME_DIR/$filename")" >> "$concatenated_genome_tmp" || { echo "Error: Unable to save concatenated genome to file"; continue; }
+    done
+
+  # Sample reads with replacement
+    sample --sample-size="$targetNreads" --sample-with-replacement --lines-per-offset=4 "$concatenated_genome_tmp" > "$sampled_reads_tmp" || { echo "Error: Unable to sample reads"; continue; }
+    echo "Sampled reads saved to: $sampled_reads_tmp"
+    rm "$concatenated_genome_tmp"
+
+# Run Kraken2 on sampled reads
+echo "Running Kraken2 on sampled reads for iteration $niter"
+kraken2 --threads 48 --db /scratch/user/robertv/databases/kraken2/Mycoplasmoidales_Mbovis_db/ "$sampled_reads_tmp"  \
+    --report "$KRAKEN_DIR/sampled_reads_${niter}_mb_classification.kreport2" > /dev/null 2>&1 || { echo "Error: Unable to run Kraken2 for iteration $niter"; continue; }
+echo "Kraken2 completed for iteration $niter"
+
+    # Clean up temporary files
+
+    rm "$sampled_reads_tmp"
+done
+ 
+echo "Concatenation, sampling, and Kraken2 completed."
