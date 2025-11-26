@@ -205,19 +205,24 @@ replace sim_outcome=0 if kraken2_status==1 | kraken2_status==2 & method == 0 /* 
 generate true_status=1 if msweep_status==4 | msweep_status==2 & method == 1 /* True negatives (TN) or false positives (FP) */
 replace true_status=0 if msweep_status==1 | msweep_status==3 & method == 1 /* True positives (TP) or false negatives (FN) */
 *kraken2 
-replace true_status=1 if kraken2_status==4 | kraken2_status==2 & method == 1 /* True negatives (TN) or false positives (FP) */
-replace true_status=0 if kraken2_status==1 | kraken2_status==3 & method == 1 /* True positives (TP) or false negatives (FN) */
+replace true_status=1 if kraken2_status==4 | kraken2_status==2 & method == 0 /* True negatives (TN) or false positives (FP) */
+replace true_status=0 if kraken2_status==1 | kraken2_status==3 & method == 0 /* True positives (TP) or false negatives (FN) */
 
 gen weight = msweep_weight if method == 1
 replace weight = kraken2_weight if method == 0
 
 * Model
-logistic sim_outcome i.enrichment##i.N_PSV##i.method if true_status == 1 [fweight=weight] /* not converging */
+logistic sim_outcome i.enrichment##i.N_PSV##i.method if true_status == 1 [fweight=weight]
+testparm i.enrichment#i.N_PSV#i.method /*p=0.9458*/
+
+
 logistic sim_outcome i.enrichment##i.method i.N_PSV##i.method if true_status == 1 [fweight=weight]
-testparm i.enrichment#i.method /* p = 0.92 */
-testparm i.N_PSV#i.method /* p < 0.001 */
+testparm i.enrichment#i.method /* p = 0.7354 */
+testparm i.N_PSV#i.method /* p < 0.0001 */
+
 logistic sim_outcome i.enrichment i.N_PSV##i.method if true_status == 1 [fweight=weight]
-testparm i.enrichment
+testparm i.enrichment /*0.7935*/
+testparm i.N_PSV#i.method /* p < 0.0001 */
 
 * Margins table
 margins i.N_PSV#i.method
@@ -229,12 +234,16 @@ margins i.N_PSV#i.method, pwcompare(effects)
 
 
 /** MODEL NPV **/
-logistic true_status i.enrichment##i.N_PSV##i.method if sim_outcome == 1 [fweight=weight] /* not converging */
+logistic true_status i.enrichment##i.N_PSV##i.method if sim_outcome == 1 [fweight=weight] 
+testparm i.enrichment#i.N_PSV#i.method /*p=0.0473, but several level of the triple interaction dropped due to collinearity*/
+
 logistic true_status i.enrichment##i.method i.N_PSV##i.method if sim_outcome == 1 [fweight=weight]
-testparm i.enrichment#i.method /* p = 0.92 */
-testparm i.N_PSV#i.method /* p < 0.001 */
-logistic true_status i.enrichment i.N_PSV##i.method if sim_outcome == 1 [fweight=weight]
-testparm i.enrichment
+testparm i.enrichment#i.method /* p = 0.8184 */
+testparm i.N_PSV#i.method /* p < 0.0001 */
+
+logistic true_status i.enrichment i.N_PSV##i.method if sim_outcome == 1 [fweight=weight] /*perfect prediction in two levels of the interaction N_PSV#method*/
+testparm i.enrichment /*0.9939*/
+testparm i.N_PSV#i.method /* p < 0.0001 */
 
 * Margins table
 margins i.N_PSV#i.method
